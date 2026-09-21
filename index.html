@@ -30,10 +30,10 @@
         <button 
           id="sync-btn"
           onclick="fetchTransactions()"
-          class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-md transition flex items-center gap-2 text-sm"
+          class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-md transition flex items-center gap-2 text-sm disabled:opacity-50"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-          Refresh Data
+          <span>Refresh Data</span>
         </button>
 
         <!-- Connect Bank Account Button -->
@@ -49,7 +49,7 @@
     </header>
 
     <!-- Status Banner -->
-    <div id="status-banner" class="hidden p-4 rounded-md text-sm"></div>
+    <div id="status-banner" class="hidden p-4 rounded-md text-sm transition-all duration-200"></div>
 
     <!-- Transactions Table -->
     <main class="bg-white rounded-lg shadow-sm overflow-hidden">
@@ -78,8 +78,8 @@
     // ------------------------------------------------------------------
     // 1. SUPABASE CONFIGURATION
     // ------------------------------------------------------------------
-    const SUPABASE_URL = 'https://nhkksisbqczvjarscmgg.supabase.co';
-    const SUPABASE_ANON_KEY = 'sb_publishable_nmv2QD3Bk7qK_LwWkMow3A_rQeEK__t';
+    const SUPABASE_URL = 'https://gesppdhjctcplnnuqyyu.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_6lNXBEN54m51FGkYtmXGow_tCF2NWv9';
     
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -89,24 +89,28 @@
     async function linkRealAccount() {
       const connectBtn = document.getElementById('connect-bank-btn');
       setLoadingState(connectBtn, true, 'Connecting...');
+      hideStatus();
 
       try {
-        // Step A: Request a link_token from your Edge Function
+        // Step A: Request a link_token from Edge Function
         const { data: linkData, error: linkError } = await supabaseClient.functions.invoke('create-link-token');
 
         if (linkError || !linkData?.link_token) {
           throw new Error(linkError?.message || 'Failed to create Plaid link token.');
         }
 
-        // Step B: Open the Plaid Link modal dialog
+        // Step B: Initialize & open Plaid Link modal
         const handler = Plaid.create({
           token: linkData.link_token,
           onSuccess: async (public_token, metadata) => {
-            showStatus('Exchanging token and syncing initial transactions...', 'info');
+            showStatus('Exchanging token and storing bank connection...', 'info');
 
-            // Step C: Exchange the public_token for a permanent access_token in Edge Function
+            // Step C: Send public_token to Edge Function to exchange & save access_token
             const { error: exchangeError } = await supabaseClient.functions.invoke('exchange-public-token', {
-              body: { public_token, metadata }
+              body: { 
+                public_token: public_token, 
+                institution: metadata.institution 
+              }
             });
 
             if (exchangeError) {
@@ -141,6 +145,9 @@
     // ------------------------------------------------------------------
     async function fetchTransactions() {
       const tbody = document.getElementById('transactions-body');
+      const syncBtn = document.getElementById('sync-btn');
+      
+      setLoadingState(syncBtn, true, 'Refreshing...');
       
       try {
         const { data: transactions, error } = await supabaseClient
@@ -157,18 +164,24 @@
                 No transactions found. Click <strong>Connect Bank Account</strong> above to sync your account.
               </td>
             </tr>`;
+          setLoadingState(syncBtn, false, 'Refresh Data');
           return;
         }
 
         tbody.innerHTML = transactions.map(tx => {
-          const rawAmount = typeof tx.amount === 'number' ? tx.amount : parseFloat(String(tx.amount || 0).replace(/[^0-9.-]/g, '')) || 0;
+          const rawAmount = typeof tx.amount === 'number' 
+            ? tx.amount 
+            : parseFloat(String(tx.amount || 0).replace(/[^0-9.-]/g, '')) || 0;
           
           const formattedAmount = new Intl.NumberFormat('en-US', {
             style: 'currency',
             currency: 'USD'
-          }).format(rawAmount);
+          }).format(Math.abs(rawAmount));
 
-          const amountColor = rawAmount < 0 ? 'text-emerald-600' : 'text-gray-900';
+          // Plaid positive amounts usually represent debits/spending
+          const isSpending = rawAmount > 0;
+          const displayAmount = isSpending ? `-${formattedAmount}` : `+${formattedAmount}`;
+          const amountColor = isSpending ? 'text-gray-900' : 'text-emerald-600 font-semibold';
 
           return `
             <tr class="hover:bg-gray-50">
@@ -176,11 +189,11 @@
               <td class="py-3 px-4 font-medium text-gray-800">${tx.merchant_name || tx.name || tx.description || 'Unknown'}</td>
               <td class="py-3 px-4">
                 <span class="inline-block bg-gray-100 text-gray-600 px-2.5 py-0.5 rounded-full text-xs">
-                  ${tx.user_category || tx.category || 'Uncategorized'}
+                  ${tx.user_category || tx.category || 'General'}
                 </span>
               </td>
               <td class="py-3 px-4 text-right font-medium ${amountColor}">
-                ${formattedAmount}
+                ${displayAmount}
               </td>
             </tr>
           `;
@@ -192,6 +205,8 @@
           <tr>
             <td colspan="4" class="py-8 text-center text-red-500">Error loading data from Supabase.</td>
           </tr>`;
+      } finally {
+        setLoadingState(syncBtn, false, 'Refresh Data');
       }
     }
 
@@ -199,6 +214,7 @@
     // 4. UI HELPER FUNCTIONS
     // ------------------------------------------------------------------
     function setLoadingState(button, isLoading, text) {
+      if (!button) return;
       button.disabled = isLoading;
       const span = button.querySelector('span');
       if (span) span.innerText = text;
@@ -217,6 +233,11 @@
       }
 
       banner.innerText = message;
+    }
+
+    function hideStatus() {
+      const banner = document.getElementById('status-banner');
+      banner.classList.add('hidden');
     }
 
     // Initial load on page ready
