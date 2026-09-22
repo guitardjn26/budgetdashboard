@@ -143,13 +143,20 @@
     // ------------------------------------------------------------------
     // 3. FETCH TRANSACTIONS FROM SUPABASE
     // ------------------------------------------------------------------
+   // ------------------------------------------------------------------
+    // 3. FETCH TRANSACTIONS FROM SUPABASE
+    // ------------------------------------------------------------------
     async function fetchTransactions() {
       const tbody = document.getElementById('transactions-body');
       const syncBtn = document.getElementById('sync-btn');
       
-      setLoadingState(syncBtn, true, 'Refreshing...');
+      setLoadingState(syncBtn, true, 'Syncing...');
       
       try {
+        // Step A: Invoke sync-transactions to trigger Plaid sync before fetching
+        await supabaseClient.functions.invoke('sync-transactions');
+
+        // Step B: Query transactions table for refreshed data
         const { data: transactions, error } = await supabaseClient
           .from('transactions')
           .select('*')
@@ -178,7 +185,6 @@
             currency: 'USD'
           }).format(Math.abs(rawAmount));
 
-          // Plaid positive amounts usually represent debits/spending
           const isSpending = rawAmount > 0;
           const displayAmount = isSpending ? `-${formattedAmount}` : `+${formattedAmount}`;
           const amountColor = isSpending ? 'text-gray-900' : 'text-emerald-600 font-semibold';
