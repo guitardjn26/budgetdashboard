@@ -563,60 +563,68 @@
     // 2. PLAID LINK FLOW
     // ------------------------------------------------------------------
     async function linkRealAccount() {
-      const connectBtn = document.getElementById('connect-bank-btn');
-      const btnText = document.getElementById('connect-btn-text');
-      connectBtn.disabled = true;
-      btnText.innerText = 'Connecting...';
-      hideStatus();
+  const connectBtn = document.getElementById('connect-bank-btn');
+  const btnText = document.getElementById('connect-btn-text');
+  connectBtn.disabled = true;
+  btnText.innerText = 'Connecting...';
+  hideStatus();
 
-      try {
-        const { data: linkData, error: linkError } = await supabaseClient.functions.invoke('create-link-token');
+  try {
+    const { data: linkData, error: linkError } = await supabaseClient.functions.invoke('create-link-token');
 
-        if (linkError || !linkData?.link_token) {
-          throw new Error(linkError?.message || 'Failed to create Plaid link token.');
-        }
+    if (linkError || !linkData?.link_token) {
+      throw new Error(linkError?.message || 'Failed to create Plaid link token.');
+    }
 
-        const handler = Plaid.create({
-          token: linkData.link_token,
-          onSuccess: async (public_token, metadata) => {
-            showStatus('Exchanging token and storing bank connection...', 'info');
+    const handler = Plaid.create({
+      token: linkData.link_token,
+      onSuccess: async (public_token, metadata) => {
+        showStatus('Exchanging token and storing bank connection...', 'info');
 
-            const { error: exchangeError } = await supabaseClient.functions.invoke('exchange-public-token', {
-              body: { 
-                public_token: public_token, 
-                institution: metadata.institution 
-              }
-            });
-
-            if (exchangeError) {
-              showStatus(`Connection failed: ${exchangeError.message}`, 'error');
-            } else {
-              showStatus('Bank account connected successfully!', 'success');
-              await fetchTransactions();
-            }
-            connectBtn.disabled = false;
-            btnText.innerText = 'Connect Bank Account';
-          },
-          onExit: (err, metadata) => {
-            connectBtn.disabled = false;
-            btnText.innerText = 'Connect Bank Account';
-            if (err != null) {
-              showStatus(`Plaid Link error: ${err.display_message || err.message}`, 'error');
-            }
-          },
-          onEvent: (eventName, metadata) => {
-            console.log('Plaid Event:', eventName, metadata);
+        const { error: exchangeError } = await supabaseClient.functions.invoke('exchange-public-token', {
+          body: { 
+            public_token: public_token, 
+            institution: metadata.institution 
           }
         });
 
-        handler.open();
-
-      } catch (err) {
-        showStatus(err.message, 'error');
+        if (exchangeError) {
+          showStatus(`Connection failed: ${exchangeError.message}`, 'error');
+        } else {
+          showStatus('Bank account connected! Fetching transactions...', 'info');
+          
+          // Trigger transaction sync immediately after exchanging tokens
+          const { error: syncError } = await supabaseClient.functions.invoke('sync-transactions');
+          if (syncError) {
+            showStatus(`Account linked, but sync failed: ${syncError.message}`, 'error');
+          } else {
+            showStatus('Bank account connected and transactions synced!', 'success');
+          }
+          await fetchTransactions();
+        }
         connectBtn.disabled = false;
         btnText.innerText = 'Connect Bank Account';
+      },
+      onExit: (err, metadata) => {
+        connectBtn.disabled = false;
+        btnText.innerText = 'Connect Bank Account';
+        if (err != null) {
+          showStatus(`Plaid Link error: ${err.display_message || err.message}`, 'error');
+        }
+      },
+      onEvent: (eventName, metadata) => {
+        console.log('Plaid Event:', eventName, metadata);
       }
-    }
+    });
+
+    handler.open();
+
+  } catch (err) {
+    showStatus(err.message, 'error');
+    connectBtn.disabled = false;
+    btnText.innerText = 'Connect Bank Account';
+  }
+}
 
     // --- Modern Dynamic Color Palette for Category Badges & Months ---
     const themePalette = [
